@@ -449,14 +449,19 @@ int notification_init(notification * n, int id)
          */
 int notification_close_by_id(int id, int reason)
 {
-        notification *target = NULL;
+    int free = 0;
+    notification *target = NULL;
 
         for (GList * iter = g_queue_peek_head_link(displayed); iter;
              iter = iter->next) {
                 notification *n = iter->data;
                 if (n->id == id) {
                         g_queue_remove(displayed, n);
-                        g_queue_push_tail(history, n);
+                        if(reason != 4){
+                            g_queue_push_tail(history, n);
+                        }else {
+                            free = 1;
+                        }
                         target = n;
                         break;
                 }
@@ -476,7 +481,7 @@ int notification_close_by_id(int id, int reason)
         if (reason > 0 && reason < 4 && target != NULL) {
                 notificationClosed(target, reason);
         }
-
+        if(free) notification_free(target);
         wake_up();
         return reason;
 }

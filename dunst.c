@@ -158,15 +158,15 @@ void move_all_to_history()
 
 void history_pop(void)
 {
-
         if (g_queue_is_empty(history))
                 return;
-
-        notification *n = g_queue_pop_tail(history);
-        n->redisplayed = true;
-        n->start = 0;
-        n->timeout = settings.sticky_history ? 0 : n->timeout;
-        g_queue_push_head(queue, n);
+        do {
+            notification *n = g_queue_pop_tail(history);
+            n->redisplayed = true;
+            n->start = 0;
+            n->timeout = settings.sticky_history ? 0 : n->timeout;
+            g_queue_push_head(queue, n);
+        }while(!g_queue_is_empty(history));
 
         wake_up();
 }

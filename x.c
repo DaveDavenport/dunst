@@ -673,7 +673,7 @@ static void x_handle_click(XEvent ev)
                                 y += settings.frame_width;
                 }
                 if (n)
-                        notification_close(n, 2);
+                        notification_close(n, 4);
         }
 }
 
