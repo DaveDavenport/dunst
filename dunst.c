@@ -158,6 +158,9 @@ void move_all_to_history()
 
 void history_pop(void)
 {
+        // When showing history, first close all, then popup.
+        // This gives the most consistent look.
+        move_all_to_history();
         if (g_queue_is_empty(history))
                 return;
         do {
