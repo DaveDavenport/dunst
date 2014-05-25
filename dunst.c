@@ -242,7 +242,7 @@ gboolean run(void *data)
         }
 
         if (xctx.visible && (pause_display || displayed->length == 0)) {
-            x_win_hide(); 
+            x_win_hide();
         }
 
         if (xctx.visible) {
@@ -308,6 +308,7 @@ int main(int argc, char *argv[])
                 n->timeout = 10;
                 n->urgency = LOW;
                 n->icon = NULL;
+                n->category = NULL;
                 n->msg = NULL;
                 n->dbus_client = NULL;
                 n->color_strings[0] = NULL;

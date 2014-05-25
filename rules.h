@@ -13,10 +13,13 @@ typedef struct _rule_t {
         char *summary;
         char *body;
         char *icon;
+        char *category;
+        int msg_urgency;
 
         /* actions */
         int timeout;
         int urgency;
+        char *new_icon;
         char *fg;
         char *bg;
         const char *format;

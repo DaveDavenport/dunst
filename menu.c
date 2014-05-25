@@ -28,7 +28,9 @@ char *extract_urls(const char *to_match)
 
         if (!is_initialized) {
                 char *regex =
-                    "((http[s]?|ftp[s]?)(://))?(www\\.)?[[:alnum:]._-]+\\.[^[:space:].\"<>]{2,}";
+                    "\\b(https?://|ftps?://|news://|mailto:|file://|www\\.)"
+                    "[[:alnum:]\\-\\@;/?:&=%$.+!*\x27,~#]*"
+                    "(\\([[:alnum:]\\-\\@;/?:&=%$.+!*\x27,~#]*\\)|[[:alnum:]\\-\\@;/?:&=%$+*~])+";
                 int ret = regcomp(&cregex, regex, REG_EXTENDED | REG_ICASE);
                 if (ret != 0) {
                         printf("failed to compile regex\n");
@@ -149,7 +151,7 @@ void dispatch_menu_result(const char *input)
                 in = strchr(in, ']');
                 if (in == NULL)
                     break;
-            default: 
+            default:
                 {   // test and open url
                     char *maybe_url = extract_urls(in);
                     if (maybe_url) {

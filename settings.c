@@ -31,6 +31,27 @@ static void parse_follow_mode(const char *mode)
 
 }
 
+static int ini_get_urgency(char *section, char *key, int def)
+{
+        int ret = def;
+        char *urg = ini_get_string(section, key, "");
+
+        if (strlen(urg) > 0) {
+                if (strcmp(urg, "low") == 0)
+                        ret = LOW;
+                else if (strcmp(urg, "normal") == 0)
+                        ret = NORM;
+                else if (strcmp(urg, "critical") == 0)
+                        ret = CRIT;
+                else
+                        fprintf(stderr,
+                                "unknown urgency: %s, ignoring\n",
+                                urg);
+                free(urg);
+        }
+        return ret;
+}
+
 void load_settings(char *cmdline_config_path)
 {
 
@@ -192,6 +213,28 @@ void load_settings(char *cmdline_config_path)
             option_get_string("global", "browser", "-browser", browser,
                               "path to browser");
 
+        {
+                char *c = option_get_string("global", "icon_position",
+                                            "-icon_position", "off",
+                                            "Align icons left/right/off");
+                if (strlen(c) > 0) {
+                        if (strcmp(c, "left") == 0)
+                                settings.icon_position = icons_left;
+                        else if (strcmp(c, "right") == 0)
+                                settings.icon_position = icons_right;
+                        else if (strcmp(c, "off") == 0)
+                                settings.icon_position = icons_off;
+                        else
+                                fprintf(stderr,
+                                        "Warning: unknown icon position: %s\n", c);
+                        free(c);
+                }
+        }
+
+        settings.icon_folders =
+            option_get_string("global", "icon_folders", "-icon_folders", icon_folders,
+                              "paths to default icons");
+
         settings.frame_width =
             option_get_int("frame", "width", "-frame_width", frame_width,
                            "Width of frame around window");
@@ -209,6 +252,9 @@ void load_settings(char *cmdline_config_path)
         settings.timeouts[LOW] =
             option_get_int("urgency_low", "timeout", "-lto", timeouts[LOW],
                            "Timeout for notifications with low urgency");
+        settings.icons[LOW] =
+            option_get_string("urgency_low", "icon", "-li", icons[LOW],
+                              "Icon for notifications with low urgency");
         settings.normbgcolor =
             option_get_string("urgency_normal", "background", "-nb",
                               normbgcolor,
@@ -220,6 +266,9 @@ void load_settings(char *cmdline_config_path)
         settings.timeouts[NORM] =
             option_get_int("urgency_normal", "timeout", "-nto", timeouts[NORM],
                            "Timeout for notifications with normal urgency");
+        settings.icons[NORM] =
+            option_get_string("urgency_normal", "icon", "-ni", icons[NORM],
+                              "Icon for notifications with normal urgency");
         settings.critbgcolor =
             option_get_string("urgency_critical", "background", "-cb",
                               critbgcolor,
@@ -229,9 +278,11 @@ void load_settings(char *cmdline_config_path)
                               critfgcolor,
                               "Foreground color for notifications with ciritical urgency");
         settings.timeouts[CRIT] =
-            option_get_int("urgency_critical", "timeout", "-cto",
-                           timeouts[CRIT],
+            option_get_int("urgency_critical", "timeout", "-cto", timeouts[CRIT],
                            "Timeout for notifications with critical urgency");
+        settings.icons[CRIT] =
+            option_get_string("urgency_critical", "icon", "-ci", icons[CRIT],
+                              "Icon for notifications with critical urgency");
 
         settings.close_ks.str =
             option_get_string("shortcuts", "close", "-key", close_ks.str,
@@ -255,7 +306,7 @@ void load_settings(char *cmdline_config_path)
 
         /* push hardcoded default rules into rules list */
         for (int i = 0; i < LENGTH(default_rules); i++) {
-                rules = g_slist_insert(rules, &(default_rules[i]), 0);
+                rules = g_slist_insert(rules, &(default_rules[i]), -1);
         }
 
         char *cur_section = NULL;
@@ -282,7 +333,7 @@ void load_settings(char *cmdline_config_path)
                 if (r == NULL) {
                         r = g_malloc(sizeof(rule_t));
                         rule_init(r);
-                        rules = g_slist_insert(rules, r, 0);
+                        rules = g_slist_insert(rules, r, -1);
                 }
 
                 r->name = g_strdup(cur_section);
@@ -291,26 +342,13 @@ void load_settings(char *cmdline_config_path)
                 r->body = ini_get_string(cur_section, "body", r->body);
                 r->icon = ini_get_string(cur_section, "icon", r->icon);
                 r->timeout = ini_get_int(cur_section, "timeout", r->timeout);
-                {
-                        char *urg = ini_get_string(cur_section, "urgency", "");
-                        if (strlen(urg) > 0) {
-                                if (strcmp(urg, "low") == 0)
-                                        r->urgency = LOW;
-                                else if (strcmp(urg, "normal") == 0)
-                                        r->urgency = NORM;
-                                else if (strcmp(urg, "critical") == 0)
-                                        r->urgency = CRIT;
-                                else
-                                        fprintf(stderr,
-                                                "unknown urgency: %s, ignoring\n",
-                                                urg);
-                                free(urg);
-                        }
-                }
+                r->urgency = ini_get_urgency(cur_section, "urgency", r->urgency);
+                r->msg_urgency = ini_get_urgency(cur_section, "msg_urgency", r->msg_urgency);
                 r->fg = ini_get_string(cur_section, "foreground", r->fg);
                 r->bg = ini_get_string(cur_section, "background", r->bg);
                 r->format = ini_get_string(cur_section, "format", r->format);
-                r->script = ini_get_string(cur_section, "script", NULL);
+                r->new_icon = ini_get_string(cur_section, "new_icon", r->new_icon);
+				r->script = ini_get_string(cur_section, "script", NULL);
         }
 
 #ifndef STATIC_CONFIG

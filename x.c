@@ -26,6 +26,7 @@
 
 xctx_t xctx;
 bool dunst_grab_errored = false;
+bool dunst_follow_errored = false;
 
 typedef struct _cairo_ctx {
         cairo_status_t status;
@@ -40,12 +41,16 @@ typedef struct _colored_layout {
         color_t bg;
         char *text;
         PangoAttrList *attr;
+        cairo_surface_t *icon;
 } colored_layout;
 
 cairo_ctx_t cairo_ctx;
 
 static color_t frame_color;
 
+/* FIXME refactor setup teardown handlers into one setup and one teardown */
+static void x_follow_setup_error_handler(void);
+static int x_follow_tear_down_error_handler(void);
 static void x_shortcut_setup_error_handler(void);
 static int x_shortcut_tear_down_error_handler(void);
 static void x_win_move(int width, int height);
@@ -160,12 +165,24 @@ static void r_setup_pango_layout(PangoLayout *layout, int width)
 
 }
 
+static void r_update_layouts_width(GSList *layouts, int width)
+{
+        width -= 2 * settings.h_padding;
+        width -= 2 * settings.frame_width;
+
+        for (GSList *iter = layouts; iter; iter = iter->next) {
+                colored_layout *cl = iter->data;
+                pango_layout_set_width(cl->l, width * PANGO_SCALE);
+        }
+}
+
 static void free_colored_layout(void *data)
 {
         colored_layout *cl = data;
         g_object_unref(cl->l);
         pango_attr_list_unref(cl->attr);
         g_free(cl->text);
+        if (cl->icon) cairo_surface_destroy(cl->icon);
         g_free(cl);
 }
 
@@ -208,6 +225,10 @@ static dimension_t calculate_dimensions(GSList *layouts)
                 colored_layout *cl = iter->data;
                 int w=0,h=0;
                 pango_layout_get_pixel_size(cl->l, &w, &h);
+                if (cl->icon) {
+                        h = MAX(cairo_image_surface_get_height(cl->icon), h);
+                        w += cairo_image_surface_get_width(cl->icon) + settings.h_padding;
+                }
                 dim.h += h;
                 text_width = MAX(w, text_width);
 
@@ -227,13 +248,18 @@ static dimension_t calculate_dimensions(GSList *layouts)
                         }
 
                         /* re-setup the layout */
-                        int width = dim.w;
-                        width -= 2 * settings.h_padding;
-                        width -= 2 * settings.frame_width;
-                        r_setup_pango_layout(cl->l, width);
+                        w = dim.w;
+                        w -= 2 * settings.h_padding;
+                        w -= 2 * settings.frame_width;
+                        if (cl->icon) w -= cairo_image_surface_get_width(cl->icon) + settings.h_padding;
+                        r_setup_pango_layout(cl->l, w);
 
                         /* re-read information */
                         pango_layout_get_pixel_size(cl->l, &w, &h);
+                        if (cl->icon) {
+                                h = MAX(cairo_image_surface_get_height(cl->icon), h);
+                                w += cairo_image_surface_get_width(cl->icon) + settings.h_padding;
+                        }
                         dim.h += h;
                         text_width = MAX(w, text_width);
                 }
@@ -247,6 +273,49 @@ static dimension_t calculate_dimensions(GSList *layouts)
         return dim;
 }
 
+static cairo_surface_t *get_icon_surface(char *icon_path)
+{
+        cairo_surface_t *icon_surface = NULL;
+        if (strlen(icon_path) > 0 && settings.icon_position != icons_off) {
+                /* absolute path? */
+                if (icon_path[0] == '/' || icon_path[0] == '~') {
+                        icon_surface = cairo_image_surface_create_from_png(icon_path);
+                        if (cairo_surface_status(icon_surface) != CAIRO_STATUS_SUCCESS) {
+                                cairo_surface_destroy(icon_surface);
+                                icon_surface = NULL;
+                        }
+                }
+                /* search in icon_folders */
+                if (icon_surface == NULL) {
+                        char *start = settings.icon_folders,
+                             *end, *current_folder, *maybe_icon_path;
+                        do {
+                                end = strchr(start, ':');
+                                if (end == NULL) end = strchr(settings.icon_folders, '\0'); /* end = end of string */
+
+                                current_folder = strndup(start, end - start);
+                                maybe_icon_path = g_strconcat(current_folder, "/", icon_path, ".png", NULL);
+                                free(current_folder);
+
+                                icon_surface = cairo_image_surface_create_from_png(maybe_icon_path);
+                                free(maybe_icon_path);
+                                if (cairo_surface_status(icon_surface) == CAIRO_STATUS_SUCCESS) {
+                                        return icon_surface;
+                                } else {
+                                        cairo_surface_destroy(icon_surface);
+                                        icon_surface = NULL;
+                                }
+
+                                start = end + 1;
+                        } while (*(end) != '\0');
+                }
+                if (icon_surface == NULL)
+                        fprintf(stderr,
+                                "Could not load icon: '%s'\n", icon_path);
+        }
+        return icon_surface;
+}
+
 static colored_layout *r_init_shared(cairo_t *c, notification *n)
 {
         colored_layout *cl = malloc(sizeof(colored_layout));
@@ -256,6 +325,7 @@ static colored_layout *r_init_shared(cairo_t *c, notification *n)
                 pango_layout_set_ellipsize(cl->l, PANGO_ELLIPSIZE_MIDDLE);
         }
 
+        cl->icon = get_icon_surface(n->icon);
 
         cl->fg = x_string_to_color_t(n->color_strings[ColFG]);
         cl->bg = x_string_to_color_t(n->color_strings[ColBG]);
@@ -268,6 +338,7 @@ static colored_layout *r_init_shared(cairo_t *c, notification *n)
         } else {
                 width -= 2 * settings.h_padding;
                 width -= 2 * settings.frame_width;
+                if (cl->icon) width -= cairo_image_surface_get_width(cl->icon) + settings.h_padding;
                 r_setup_pango_layout(cl->l, width);
         }
 
@@ -309,6 +380,7 @@ static colored_layout *r_create_layout_from_notification(cairo_t *c, notificatio
 
 
         pango_layout_get_pixel_size(cl->l, NULL, &(n->displayed_height));
+        if (cl->icon) n->displayed_height = MAX(cairo_image_surface_get_height(cl->icon), n->displayed_height);
         n->displayed_height += 2 * settings.padding;
 
         n->first_render = false;
@@ -358,6 +430,7 @@ static dimension_t x_render_layout(cairo_t *c, colored_layout *cl, dimension_t d
 {
         int h;
         pango_layout_get_pixel_size(cl->l, NULL, &h);
+        if (cl->icon) h = MAX(cairo_image_surface_get_height(cl->icon), h);
 
         int bg_x = 0;
         int bg_y = dim.y;
@@ -379,7 +452,9 @@ static dimension_t x_render_layout(cairo_t *c, colored_layout *cl, dimension_t d
         cairo_fill(c);
 
         dim.y += settings.padding;
-        cairo_move_to(c, settings.h_padding, dim.y);
+        if (cl->icon && settings.icon_position == icons_left)
+                cairo_move_to(c, cairo_image_surface_get_width(cl->icon) + 2 * settings.h_padding, dim.y);
+        else cairo_move_to(c, settings.h_padding, dim.y);
         cairo_set_source_rgb(c, cl->fg.r, cl->fg.g, cl->fg.b);
         pango_cairo_update_layout(c, cl->l);
         pango_cairo_show_layout(c, cl->l);
@@ -397,6 +472,20 @@ static dimension_t x_render_layout(cairo_t *c, colored_layout *cl, dimension_t d
         }
         cairo_move_to(c, settings.h_padding, dim.y);
 
+        if (cl->icon)  {
+                unsigned int image_width = cairo_image_surface_get_width(cl->icon),
+                             image_height = cairo_image_surface_get_height(cl->icon),
+                             image_x,
+                             image_y = bg_y + settings.padding;
+
+                if (settings.icon_position == icons_left) image_x = settings.h_padding;
+                else image_x = bg_width - settings.h_padding - image_width;
+
+                cairo_set_source_surface (c, cl->icon, image_x, image_y);
+                cairo_rectangle (c, image_x, image_y, image_width, image_height);
+                cairo_fill (c);
+        }
+
         return dim;
 }
 
@@ -408,6 +497,10 @@ void x_win_draw(void)
         dimension_t dim = calculate_dimensions(layouts);
         int width = dim.w;
         int height = dim.h;
+
+	if ((have_dynamic_width() || settings.shrink) && settings.align != left) {
+                r_update_layouts_width(layouts, width);
+        }
 
         cairo_t *c;
         cairo_surface_t *image_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, width, height);
@@ -581,10 +674,6 @@ gboolean x_mainloop_fd_dispatch(GSource * source, GSourceFunc callback,
                 case SelectionNotify:
                         if (ev.xselection.property == xctx.utf8)
                                 break;
-                case VisibilityNotify:
-                        if (ev.xvisibility.state != VisibilityUnobscured)
-                                XRaiseWindow(xctx.dpy, xctx.win);
-                        break;
                 case ButtonPress:
                         if (ev.xbutton.window == xctx.win) {
                                 x_handle_click(ev);
@@ -710,9 +799,12 @@ static Window get_focused_window(void)
          */
 static int select_screen(XineramaScreenInfo * info, int info_len)
 {
+        int ret = 0;
+        x_follow_setup_error_handler();
         if (settings.f_mode == FOLLOW_NONE) {
-                return settings.monitor >=
+                 ret = settings.monitor >=
                     0 ? settings.monitor : XDefaultScreen(xctx.dpy);
+                 goto sc_cleanup;
 
         } else {
                 int x, y;
@@ -737,8 +829,9 @@ static int select_screen(XineramaScreenInfo * info, int info_len)
 
                         if (focused == 0) {
                                 /* something went wrong. Fallback to default */
-                                return settings.monitor >=
+                                ret = settings.monitor >=
                                     0 ? settings.monitor : XDefaultScreen(xctx.dpy);
+                                goto sc_cleanup;
                         }
 
                         Window child_return;
@@ -750,14 +843,19 @@ static int select_screen(XineramaScreenInfo * info, int info_len)
                         if (INRECT(x, y, info[i].x_org,
                                    info[i].y_org,
                                    info[i].width, info[i].height)) {
-                                return i;
+                                ret = i;
+                                goto sc_cleanup;
                         }
                 }
 
                 /* something seems to be wrong. Fallback to default */
-                return settings.monitor >=
+                ret = settings.monitor >=
                     0 ? settings.monitor : XDefaultScreen(xctx.dpy);
+                goto sc_cleanup;
         }
+sc_cleanup:
+        x_follow_tear_down_error_handler();
+        return ret;
 }
 #endif
 
@@ -854,23 +952,29 @@ void x_setup(void)
 }
 
 
-static void x_set_win_type(Window win)
+static void x_set_wm(Window win)
 {
 
-    long data[2];
+        Atom data[2];
 
-    Atom net_wm_window_type =
-            XInternAtom(xctx.dpy, "_NET_WM_WINDOW_TYPE", false);
-    Atom net_wm_window_type_notification =
-            XInternAtom(xctx.dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", false);
-    Atom net_wm_window_type_utility =
-            XInternAtom(xctx.dpy, "_NET_WM_WINDOW_TYPE_UTILITY", false);
+        /* set window type */
+        Atom net_wm_window_type =
+                XInternAtom(xctx.dpy, "_NET_WM_WINDOW_TYPE", false);
 
-    data[0] = net_wm_window_type_notification;
-    data[1] = net_wm_window_type_utility;
+        data[0] = XInternAtom(xctx.dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", false);
+        data[1] = XInternAtom(xctx.dpy, "_NET_WM_WINDOW_TYPE_UTILITY", false);
 
-    XChangeProperty(xctx.dpy, win, net_wm_window_type, XA_ATOM, 32,
-            PropModeReplace, (unsigned char *) &data, 1L);
+        XChangeProperty(xctx.dpy, win, net_wm_window_type, XA_ATOM, 32,
+                PropModeReplace, (unsigned char *) data, 2L);
+
+        /* set state above */
+        Atom net_wm_state =
+                XInternAtom(xctx.dpy, "_NET_WM_STATE", false);
+
+        data[0] = XInternAtom(xctx.dpy, "_NET_WM_STATE_ABOVE", false);
+
+        XChangeProperty(xctx.dpy, win, net_wm_state, XA_ATOM, 32,
+                PropModeReplace, (unsigned char *) data, 1L);
 }
 
         /*
@@ -906,7 +1010,7 @@ static void x_win_setup(void)
                                                         DefaultScreen(xctx.dpy)),
                           CWOverrideRedirect | CWBackPixmap | CWEventMask, &wa);
 
-        x_set_win_type(xctx.win);
+        x_set_wm(xctx.win);
         settings.transparency =
             settings.transparency > 100 ? 100 : settings.transparency;
         setopacity(xctx.win,
@@ -1001,6 +1105,17 @@ static int GrabXErrorHandler(Display * display, XErrorEvent * e)
         return 0;
 }
 
+static int FollowXErrorHandler(Display * display, XErrorEvent * e)
+{
+        dunst_follow_errored = true;
+        char err_buf[BUFSIZ];
+        XGetErrorText(display, e->error_code, err_buf, BUFSIZ);
+        fputs(err_buf, stderr);
+        fputs("\n", stderr);
+
+        return 0;
+}
+
         /*
          * Setup the Error handler.
          */
@@ -1012,6 +1127,14 @@ static void x_shortcut_setup_error_handler(void)
         XSetErrorHandler(GrabXErrorHandler);
 }
 
+static void x_follow_setup_error_handler(void)
+{
+        dunst_follow_errored = false;
+
+        XFlush(xctx.dpy);
+        XSetErrorHandler(FollowXErrorHandler);
+}
+
         /*
          * Tear down the Error handler.
          */
@@ -1021,6 +1144,14 @@ static int x_shortcut_tear_down_error_handler(void)
         XSync(xctx.dpy, false);
         XSetErrorHandler(NULL);
         return dunst_grab_errored;
+}
+
+static int x_follow_tear_down_error_handler(void)
+{
+        XFlush(xctx.dpy);
+        XSync(xctx.dpy, false);
+        XSetErrorHandler(NULL);
+        return dunst_follow_errored;
 }
 
         /*
