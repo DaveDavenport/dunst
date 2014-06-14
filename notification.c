@@ -385,11 +385,11 @@ int notification_init(notification * n, int id)
         n->start = 0;
 
         if (n->icon == NULL) {
-                n->icon = settings.icons[n->urgency];
+                n->icon = strdup(settings.icons[n->urgency]);
         }
         else if (strlen(n->icon) <= 0) {
                 free(n->icon);
-                n->icon = settings.icons[n->urgency];
+                n->icon = strdup(settings.icons[n->urgency]);
         }
 
         if (n->category == NULL) {
@@ -491,10 +491,12 @@ int notification_close_by_id(int id, int reason)
                 }
         }
 
-        if (reason > 0 && reason < 4 && target != NULL) {
+        if (reason > 0 && reason < 5 && target != NULL) {
                 notificationClosed(target, reason);
         }
-        if(free) notification_free(target);
+        if(free) {
+            notification_free(target);
+        }
         wake_up();
         return reason;
 }
