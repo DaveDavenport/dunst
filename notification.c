@@ -127,9 +127,9 @@ int notification_cmp(const void *va, const void *vb)
                 return 1;
 
         if (a->urgency != b->urgency) {
-                return b->urgency - a->urgency;
+                return a->urgency - b->urgency;
         } else {
-                return a->id - b->id;
+                return b->id - a->id;
         }
 }
 
@@ -313,6 +313,13 @@ int notification_init(notification * n, int id)
 
         n->msg = g_strstrip(n->msg);
 
+        if (id == 0) {
+                n->id = ++next_notification_id;
+        } else {
+                notification_close_by_id(id, -1);
+                n->id = id;
+        }
+
         n->dup_count = 0;
 
         /* check if n is a duplicate */
@@ -402,18 +409,12 @@ int notification_init(notification * n, int id)
 
         n->first_render = true;
 
-        if (id == 0) {
-                n->id = ++next_notification_id;
-        } else {
-                notification_close_by_id(id, -1);
-                n->id = id;
-        }
-
         if (strlen(n->msg) == 0) {
                 notification_close(n, 2);
                 printf("skipping notification: %s %s\n", n->body, n->summary);
         } else {
-                g_queue_insert_sorted(queue, n, notification_cmp_data, NULL);
+//                g_queue_insert_sorted(queue, n, notification_cmp_data, NULL);
+                history_push(n);
         }
 
         char *tmp = g_strconcat(n->summary, " ", n->body, NULL);
@@ -462,19 +463,18 @@ int notification_init(notification * n, int id)
          */
 int notification_close_by_id(int id, int reason)
 {
-    int free = 0;
-    notification *target = NULL;
+        int free = 0;
+        notification *target = NULL;
 
         for (GList * iter = g_queue_peek_head_link(displayed); iter;
              iter = iter->next) {
                 notification *n = iter->data;
                 if (n->id == id) {
                         g_queue_remove(displayed, n);
-                        if(reason != 4){
-                            g_queue_push_tail(history, n);
-                        }else {
-                            free = 1;
+                        if(reason != 4) {
+                            history_push(n);
                         }
+                        else free =1 ;
                         target = n;
                         break;
                 }
@@ -485,7 +485,10 @@ int notification_close_by_id(int id, int reason)
                 notification *n = iter->data;
                 if (n->id == id) {
                         g_queue_remove(queue, n);
-                        g_queue_push_tail(history, n);
+                        if(reason != 4) {
+                            history_push(n);
+                        }
+                        else free =1 ;
                         target = n;
                         break;
                 }
@@ -497,6 +500,7 @@ int notification_close_by_id(int id, int reason)
         if(free) {
             notification_free(target);
         }
+
         wake_up();
         return reason;
 }

@@ -269,6 +269,7 @@ static dimension_t calculate_dimensions(GSList *layouts)
                 dim.w = text_width + 2 * settings.h_padding;
                 dim.w += 2 * settings.frame_width;
         }
+        dim.h = scr.dim.h-(2*xctx.geometry.y);
 
         return dim;
 }
@@ -444,8 +445,6 @@ static dimension_t x_render_layout(cairo_t *c, colored_layout *cl, dimension_t d
                 bg_height -= settings.frame_width;
         }
         bg_width -= 2 * settings.frame_width;
-        if (last)
-                bg_height -= settings.frame_width;
 
         cairo_set_source_rgb(c, cl->bg.r, cl->bg.g, cl->bg.b);
         cairo_rectangle(c, bg_x, bg_y, bg_width, bg_height);
@@ -460,7 +459,7 @@ static dimension_t x_render_layout(cairo_t *c, colored_layout *cl, dimension_t d
         pango_cairo_show_layout(c, cl->l);
         dim.y += h + settings.padding;
         color_t sep_color = x_get_separator_color(cl->fg, cl->bg);
-        if (settings.separator_height > 0 && !last) {
+        if (settings.separator_height > 0 ) {
                 cairo_set_source_rgb(c, sep_color.r, sep_color.g, sep_color.b);
 
                 cairo_rectangle(c, settings.frame_width, dim.y,
@@ -510,9 +509,14 @@ void x_win_draw(void)
         cairo_xlib_surface_set_size(cairo_ctx.surface, width, height);
 
         cairo_set_source_rgb(c, frame_color.r, frame_color.g, frame_color.b);
-        cairo_rectangle(c, 0.0, 0.0, width, height);
+        cairo_set_line_width(c, settings.frame_width);
+        cairo_rectangle(c,0,0, width,height);
         cairo_fill(c);
 
+        cairo_rectangle(c,settings.frame_width,settings.frame_width, 
+                width-2*settings.frame_width,height-2*settings.frame_width);
+        cairo_set_source_rgb(c, 0,0,0); 
+        cairo_fill(c);
         cairo_move_to(c, 0, 0);
 
         bool first = true;
@@ -688,9 +692,9 @@ gboolean x_mainloop_fd_dispatch(GSource * source, GSourceFunc callback,
                                              0) == settings.close_ks.sym
                             && settings.close_ks.mask == state) {
                                 if (displayed) {
-                                        notification *n = g_queue_peek_head(displayed);
+                                        notification *n = g_queue_peek_tail(displayed);
                                         if (n)
-                                                notification_close(n, 2);
+                                                notification_close(n, 4);
                                 }
                         }
                         if (settings.history_ks.str
@@ -965,7 +969,7 @@ static void x_set_wm(Window win)
         XStoreName(xctx.dpy, win, title);
         XChangeProperty(xctx.dpy, win, _net_wm_title,
                 XInternAtom(xctx.dpy, "UTF8_STRING", False), 8,
-                PropModeReplace, (unsigned char *) settings.title, strlen(settings.title));
+                PropModeReplace, (unsigned char *) title, strlen(title));
 
         /* set window class */
         char *class = settings.class != NULL ? settings.class : "Dunst";
